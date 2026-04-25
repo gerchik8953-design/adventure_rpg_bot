@@ -25,19 +25,16 @@ logging.basicConfig(level=logging.INFO)
 USERS_FILE = "users.json"
 
 def load_users():
-    """Загружает список пользователей из файла"""
     if not os.path.exists(USERS_FILE):
         return []
     with open(USERS_FILE, "r") as f:
         return json.load(f)
 
 def save_users(users):
-    """Сохраняет список пользователей в файл"""
     with open(USERS_FILE, "w") as f:
         json.dump(users, f)
 
 def add_user(user_id):
-    """Добавляет нового пользователя, если его ещё нет"""
     users = load_users()
     if user_id not in users:
         users.append(user_id)
@@ -169,7 +166,7 @@ def continue_story(previous_text: str, chosen_action: str):
     prompt = f"""
 Это история RPG.
 
-ПРЕДЫДУЩЕЕ СОБЫТИЕ:
+ПРЕДЫДУЩЕЕ СОБЫТИЕ (не меняй):
 {previous_text}
 
 ИГРОК ВЫБРАЛ ДЕЙСТВИЕ: "{chosen_action}"
@@ -268,6 +265,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     formatted_text = format_story_text(story_text)
     await update.message.reply_text(formatted_text, reply_markup=reply_markup, parse_mode='Markdown')
 
+# -------------------------------------------------------------------
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ОТПРАВКИ ДЛИННЫХ СООБЩЕНИЙ
+# -------------------------------------------------------------------
+async def send_long_message(chat_id, text, reply_markup=None, parse_mode=None):
+    """Отправляет длинное сообщение, разбивая его на части по 4096 символов."""
+    MAX_LEN = 4096
+    for i in range(0, len(text), MAX_LEN):
+        part = text[i:i+MAX_LEN]
+        if i == 0:
+            # Первая часть — с кнопками
+            await bot.send_message(chat_id=chat_id, text=part, reply_markup=reply_markup, parse_mode=parse_mode)
+        else:
+            # Остальные части — без кнопок
+            await bot.send_message(chat_id=chat_id, text=part, parse_mode=parse_mode)
+
+# -------------------------------------------------------------------
 async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -304,7 +317,11 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     formatted_full = format_story_text(full_story)
-    await query.edit_message_text(formatted_full, reply_markup=reply_markup, parse_mode='Markdown')
+
+    # Отправляем длинное сообщение, разбивая на части
+    global bot
+    bot = context.bot
+    await send_long_message(query.message.chat_id, formatted_full, reply_markup, 'Markdown')
 
 # -------------------------------------------------------------------
 # ЗАПУСК
