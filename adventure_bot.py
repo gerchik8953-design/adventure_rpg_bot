@@ -4,6 +4,9 @@ import base64
 import re
 import hashlib
 import threading
+import os
+import json
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -15,6 +18,30 @@ TELEGRAM_TOKEN = "8708829749:AAHSAHdxf6PO72JCSId9HfizI5qWEIpEZGI"
 MISTRAL_API_KEY = "ouoo9FtDsaWEyAZTt3YZCaeqhQqvJSyc"
 
 logging.basicConfig(level=logging.INFO)
+
+# -------------------------------------------------------------------
+# СЧЁТЧИК ПОЛЬЗОВАТЕЛЕЙ
+# -------------------------------------------------------------------
+USERS_FILE = "users.json"
+
+def load_users():
+    """Загружает список пользователей из файла"""
+    if not os.path.exists(USERS_FILE):
+        return []
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(users):
+    """Сохраняет список пользователей в файл"""
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f)
+
+def add_user(user_id):
+    """Добавляет нового пользователя, если его ещё нет"""
+    users = load_users()
+    if user_id not in users:
+        users.append(user_id)
+        save_users(users)
 
 # -------------------------------------------------------------------
 # HEALTH-СЕРВЕР ДЛЯ RENDER
@@ -35,9 +62,6 @@ def run_health_server():
 def clean_callback_data(text: str) -> str:
     hash_obj = hashlib.md5(text.encode('utf-8'))
     return f"act_{hash_obj.hexdigest()[:16]}"
-
-def get_action_from_callback(callback_data: str, action_map: dict) -> str:
-    return action_map.get(callback_data, "")
 
 def parse_options_from_text(content: str):
     options = []
@@ -195,11 +219,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• рисунок\n"
         "• игрушку\n"
         "• Lego-фигурку\n\n"
-        "✨ Я придумаю историю и предложу варианты действий!",
+        "✨ Я придумаю историю и предложу варианты действий!\n\n"
+        "📊 Команда /stats — сколько людей играют со мной.",
+        parse_mode='Markdown'
+    )
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    users = load_users()
+    count = len(users)
+    await update.message.reply_text(
+        f"📊 Этим ботом воспользовались **{count}** уникальных пользователей.",
         parse_mode='Markdown'
     )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    add_user(user_id)
+
     await update.message.chat.send_action(action="typing")
 
     photo_file = await update.message.photo[-1].get_file()
@@ -277,9 +313,13 @@ def main():
     # Запускаем health-сервер в фоновом потоке
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()
+    
+    # Небольшая задержка для предотвращения конфликтов
+    time.sleep(2)
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stats", stats))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(handle_action))
 
