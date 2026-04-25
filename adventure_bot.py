@@ -3,6 +3,8 @@ import requests
 import base64
 import re
 import hashlib
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
@@ -14,27 +16,30 @@ MISTRAL_API_KEY = "ouoo9FtDsaWEyAZTt3YZCaeqhQqvJSyc"
 
 logging.basicConfig(level=logging.INFO)
 
+# -------------------------------------------------------------------
+# HEALTH-СЕРВЕР ДЛЯ RENDER
+# -------------------------------------------------------------------
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'OK')
+
+def run_health_server():
+    server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
+    server.serve_forever()
 
 # -------------------------------------------------------------------
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # -------------------------------------------------------------------
 def clean_callback_data(text: str) -> str:
-    """
-    Преобразует текст в безопасный для callback_data (латиница, цифры, не длиннее 60 символов).
-    Используем хеш вместо текста, чтобы избежать проблем с символами.
-    """
-    # Используем MD5 хеш для гарантии безопасности
     hash_obj = hashlib.md5(text.encode('utf-8'))
     return f"act_{hash_obj.hexdigest()[:16]}"
 
-
 def get_action_from_callback(callback_data: str, action_map: dict) -> str:
-    """Извлекает оригинальный текст действия из action_map по callback_data."""
     return action_map.get(callback_data, "")
 
-
 def parse_options_from_text(content: str):
-    """Извлекает варианты действий из ответа Mistral."""
     options = []
     for line in content.split('\n'):
         line = line.strip()
@@ -57,9 +62,7 @@ def parse_options_from_text(content: str):
         options = ["Исследовать окрестности", "Поговорить с жителем", "Пойти в таверну"]
     return options[:3]
 
-
 def format_story_text(raw_text: str) -> str:
-    """Превращает сырой текст в красивый Markdown с эмодзи и разделителями."""
     text = raw_text.replace("ОПИСАНИЕ ПЕРСОНАЖА:", "🎭 **ОПИСАНИЕ ПЕРСОНАЖА:**")
     text = text.replace("НАЧАЛО ПРИКЛЮЧЕНИЯ:", "🌸 **НАЧАЛО ПРИКЛЮЧЕНИЯ:**")
     text = text.replace("Вариант", "🌀 **Вариант")
@@ -83,14 +86,11 @@ def format_story_text(raw_text: str) -> str:
             result.append("---")
     return '\n'.join(result)
 
-
 # -------------------------------------------------------------------
 # ОСНОВНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С MISTRAL
 # -------------------------------------------------------------------
 def generate_adventure_from_photo(image_bytes):
-    """Генерирует начало приключения по фотографии персонажа."""
     url = "https://api.mistral.ai/v1/chat/completions"
-
     image_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
     prompt = (
@@ -139,9 +139,7 @@ def generate_adventure_from_photo(image_bytes):
     except (KeyError, IndexError):
         return None, None
 
-
 def continue_story(previous_text: str, chosen_action: str):
-    """Генерирует продолжение истории после выбора игрока."""
     url = "https://api.mistral.ai/v1/chat/completions"
 
     prompt = f"""
@@ -187,7 +185,6 @@ def continue_story(previous_text: str, chosen_action: str):
     except (KeyError, IndexError):
         return None, None
 
-
 # -------------------------------------------------------------------
 # ОБРАБОТЧИКИ ТЕЛЕГРАМ
 # -------------------------------------------------------------------
@@ -201,7 +198,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✨ Я придумаю историю и предложу варианты действий!",
         parse_mode='Markdown'
     )
-
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(action="typing")
@@ -223,7 +219,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(story_text)
         return
 
-    # Создаём кнопки с безопасными callback_data
     keyboard = []
     action_map = {}
     for opt in options:
@@ -236,7 +231,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     formatted_text = format_story_text(story_text)
     await update.message.reply_text(formatted_text, reply_markup=reply_markup, parse_mode='Markdown')
-
 
 async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -263,7 +257,6 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(full_story)
         return
 
-    # Формируем новые кнопки для продолжения
     keyboard = []
     action_map = {}
     for opt in options:
@@ -277,11 +270,14 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     formatted_full = format_story_text(full_story)
     await query.edit_message_text(formatted_full, reply_markup=reply_markup, parse_mode='Markdown')
 
-
 # -------------------------------------------------------------------
 # ЗАПУСК
 # -------------------------------------------------------------------
 def main():
+    # Запускаем health-сервер в фоновом потоке
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -289,7 +285,6 @@ def main():
 
     print("✅ Бот Adventure RPG запущен и готов к работе")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
