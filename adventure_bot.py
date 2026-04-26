@@ -116,8 +116,8 @@ def generate_adventure_from_photo(image_bytes):
 
     prompt = (
         "Ты — мастер RPG-игр. Пользователь прислал фото своего персонажа.\n\n"
-        "1. Опиши персонажа (3–4 предложения).\n"
-        "2. Придумай завязку приключения (3–4 предложения).\n"
+        "1. Опиши персонажа с юмором (3–4 предложения).\n"
+        "2. Придумай завязку приключения с добрыми персонажами (3–4 предложения).\n"
         "3. В конце предложи 3 коротких варианта действий (каждый 2–4 слова).\n\n"
         "Формат ответа (строго соблюдай заголовки):\n"
         "ОПИСАНИЕ ПЕРСОНАЖА:\n[текст]\n"
@@ -211,23 +211,19 @@ def continue_story(previous_text: str, chosen_action: str):
 # -------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎮 *Добро пожаловать в RPG-приключение с AI-рассказчиком!*\n\n"
+        "🎮 Добро пожаловать в RPG-приключение с AI-рассказчиком!\n\n"
         "📸 Пришли мне фото своего персонажа:\n"
         "• рисунок\n"
         "• игрушку\n"
         "• Lego-фигурку\n\n"
         "✨ Я придумаю историю и предложу варианты действий!\n\n"
-        "📊 Команда /stats — сколько людей играют со мной.",
-        parse_mode='Markdown'
+        "📊 Команда /stats — сколько людей играют со мной."
     )
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = load_users()
     count = len(users)
-    await update.message.reply_text(
-        f"📊 Этим ботом воспользовались **{count}** уникальных пользователей.",
-        parse_mode='Markdown'
-    )
+    await update.message.reply_text(f"📊 Этим ботом воспользовались {count} уникальных пользователей.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -263,24 +259,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     formatted_text = format_story_text(story_text)
-    await update.message.reply_text(formatted_text, reply_markup=reply_markup, parse_mode='Markdown')
+    await update.message.reply_text(formatted_text, reply_markup=reply_markup)
 
-# -------------------------------------------------------------------
-# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ОТПРАВКИ ДЛИННЫХ СООБЩЕНИЙ
-# -------------------------------------------------------------------
-async def send_long_message(chat_id, text, reply_markup=None, parse_mode=None):
-    """Отправляет длинное сообщение, разбивая его на части по 4096 символов."""
-    MAX_LEN = 4096
-    for i in range(0, len(text), MAX_LEN):
-        part = text[i:i+MAX_LEN]
-        if i == 0:
-            # Первая часть — с кнопками
-            await bot.send_message(chat_id=chat_id, text=part, reply_markup=reply_markup, parse_mode=parse_mode)
-        else:
-            # Остальные части — без кнопок
-            await bot.send_message(chat_id=chat_id, text=part, parse_mode=parse_mode)
-
-# -------------------------------------------------------------------
 async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -317,11 +297,7 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     formatted_full = format_story_text(full_story)
-
-    # Отправляем длинное сообщение, разбивая на части
-    global bot
-    bot = context.bot
-    await send_long_message(query.message.chat_id, formatted_full, reply_markup, 'Markdown')
+    await query.edit_message_text(formatted_full, reply_markup=reply_markup)
 
 # -------------------------------------------------------------------
 # ЗАПУСК
