@@ -211,8 +211,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def send_long_text(chat_id, text, reply_markup=None):
-
-async def send_long_text(chat_id, text, reply_markup=None):
     parts = split_long_message(text)
     for i, part in enumerate(parts):
         if i == len(parts) - 1:
