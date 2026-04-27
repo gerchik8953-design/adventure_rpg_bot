@@ -202,6 +202,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✨ Я начну историю и предложу варианты действий!"
     )
 
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    users = load_users()
+    count = len(users)
+    await update.message.reply_text(
+        f"📊 Этим ботом воспользовались **{count}** уникальных пользователей.",
+        parse_mode='Markdown'
+    )
+
+async def send_long_text(chat_id, text, reply_markup=None):
+
 async def send_long_text(chat_id, text, reply_markup=None):
     parts = split_long_message(text)
     for i, part in enumerate(parts):
