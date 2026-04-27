@@ -15,7 +15,9 @@ MISTRAL_API_KEY = "ouoo9FtDsaWEyAZTt3YZCaeqhQqvJSyc"
 logging.basicConfig(level=logging.INFO)
 USERS_FILE = "users.json"
 
-# --- HEALTH-СЕРВЕР -----------------------------------------------
+# -------------------------------------------------------------------
+# HEALTH-СЕРВЕР
+# -------------------------------------------------------------------
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -26,7 +28,9 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
     server.serve_forever()
 
-# --- СЧЁТЧИК ПОЛЬЗОВАТЕЛЕЙ ---------------------------------------
+# -------------------------------------------------------------------
+# СЧЁТЧИК ПОЛЬЗОВАТЕЛЕЙ
+# -------------------------------------------------------------------
 def load_users():
     if not os.path.exists(USERS_FILE):
         return []
@@ -43,7 +47,9 @@ def add_user(user_id):
         users.append(user_id)
         save_users(users)
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ -------------------------------------
+# -------------------------------------------------------------------
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# -------------------------------------------------------------------
 def clean_callback_data(text: str) -> str:
     return f"act_{hashlib.md5(text.encode('utf-8')).hexdigest()[:16]}"
 
@@ -61,12 +67,31 @@ def parse_options_from_text(content: str):
     return options[:3]
 
 def format_story_text(raw_text: str) -> str:
-    text = raw_text.replace("ОПИСАНИЕ ПЕРСОНАЖА:", "🎭 **ОПИСАНИЕ ПЕРСОНАЖА:**")
-    text = text.replace("НАЧАЛО ПРИКЛЮЧЕНИЯ:", "🌸 **НАЧАЛО ПРИКЛЮЧЕНИЯ:**")
-    text = text.replace("Вариант", "🌀 **Вариант")
+    text = raw_text.replace("ОПИСАНИЕ ПЕРСОНАЖА:", "🎭 ОПИСАНИЕ ПЕРСОНАЖА:")
+    text = text.replace("НАЧАЛО ПРИКЛЮЧЕНИЯ:", "🌸 НАЧАЛО ПРИКЛЮЧЕНИЯ:")
+    text = text.replace("Вариант", "🌀 Вариант")
     return text
 
-# --- ФУНКЦИИ ДЛЯ РАБОТЫ С MISTRAL --------------------------------
+def split_long_message(text, max_len=4000):
+    """Разбивает длинный текст на части для Telegram."""
+    if len(text) <= max_len:
+        return [text]
+    parts = []
+    # Ищем место для разрыва
+    while len(text) > max_len:
+        split_point = text.rfind('\n\n', 0, max_len)
+        if split_point == -1:
+            split_point = text.rfind('\n', 0, max_len)
+        if split_point == -1:
+            split_point = max_len
+        parts.append(text[:split_point])
+        text = text[split_point:]
+    parts.append(text)
+    return parts
+
+# -------------------------------------------------------------------
+# ФУНКЦИИ ДЛЯ РАБОТЫ С MISTRAL
+# -------------------------------------------------------------------
 def ask_mistral(prompt, image_bytes=None):
     url = "https://api.mistral.ai/v1/chat/completions"
     
@@ -92,7 +117,7 @@ def ask_mistral(prompt, image_bytes=None):
         return None
 
 def generate_adventure_from_photo(image_bytes):
-    prompt = "Ты мастер RPG. Опиши персонажа с юмором и придумай начало приключения (3-5 предложений). В конце чётко напиши 'ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:' и затем 3 варианта действий с новой строки."
+    prompt = "Ты мастер RPG. Опиши персонажа с юмором и придумай начало приключения с добрыми героями (3-5 предложений). В конце чётко напиши 'ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:' и затем 3 варианта действий с новой строки."
     result = ask_mistral(prompt, image_bytes)
     if not result:
         return None, None
@@ -100,6 +125,10 @@ def generate_adventure_from_photo(image_bytes):
     return result, options
 
 def continue_story(previous_story, chosen_action):
+    # Обрезаем предыдущую историю, если она слишком длинная (оставляем последние 3000 символов)
+    if len(previous_story) > 3000:
+        previous_story = "...[предыдущая история сокращена]...\n" + previous_story[-3000:]
+    
     prompt = f"Это история RPG. ПРЕДЫДУЩАЯ ИСТОРИЯ: {previous_story}\n\nИГРОК ВЫБРАЛ: '{chosen_action}'\n\nНапиши продолжение (3-5 предложений) и в конце напиши 'ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:' и 3 новых варианта действий."
     result = ask_mistral(prompt)
     if not result:
@@ -107,7 +136,9 @@ def continue_story(previous_story, chosen_action):
     options = parse_options_from_text(result)
     return result, options
 
-# --- ОБРАБОТЧИКИ ТЕЛЕГРАМ ----------------------------------------
+# -------------------------------------------------------------------
+# ОБРАБОТЧИКИ ТЕЛЕГРАМ
+# -------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user(update.effective_user.id)
     await update.message.reply_text(
@@ -116,7 +147,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✨ Я начну историю и предложу варианты действий!"
     )
 
+async def send_long_text(chat_id, text, reply_markup=None):
+    """Отправляет длинный текст, разбивая на части."""
+    parts = split_long_message(text)
+    for i, part in enumerate(parts):
+        # Кнопки прикрепляем только к последней части
+        if i == len(parts) - 1:
+            await bot.send_message(chat_id=chat_id, text=part, reply_markup=reply_markup)
+        else:
+            await bot.send_message(chat_id=chat_id, text=part)
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global bot
+    bot = context.bot
+    
     add_user(update.effective_user.id)
     await update.message.chat.send_action(action="typing")
     
@@ -138,11 +182,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action_map[key] = opt
             keyboard.append([InlineKeyboardButton(f"🔹 {opt[:35]}", callback_data=key)])
         context.user_data['action_map'] = action_map
-        await update.message.reply_text(format_story_text(story), reply_markup=InlineKeyboardMarkup(keyboard))
+        formatted = format_story_text(story)
+        await send_long_text(update.message.chat_id, formatted, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        await update.message.reply_text(format_story_text(story))
+        formatted = format_story_text(story)
+        await send_long_text(update.message.chat_id, formatted)
 
 async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global bot
+    bot = context.bot
+    
     query = update.callback_query
     await query.answer()
     
@@ -171,12 +220,31 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action_map[key] = opt
             keyboard.append([InlineKeyboardButton(f"🔹 {opt[:35]}", callback_data=key)])
         context.user_data['action_map'] = action_map
-        await query.edit_message_text(format_story_text(full_story), reply_markup=InlineKeyboardMarkup(keyboard))
+        formatted = format_story_text(full_story)
+        # Используем edit_message_text с разбиением (отправляем новое сообщение, если старое слишком длинное)
+        try:
+            await query.edit_message_text(formatted, reply_markup=InlineKeyboardMarkup(keyboard))
+        except Exception as e:
+            if "Message_too_long" in str(e):
+                # Если сообщение слишком длинное, отправляем новое
+                await query.message.delete()
+                await send_long_text(query.message.chat_id, formatted, reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                raise
     else:
-        await query.edit_message_text(format_story_text(full_story))
+        formatted = format_story_text(full_story)
+        try:
+            await query.edit_message_text(formatted)
+        except Exception as e:
+            if "Message_too_long" in str(e):
+                await query.message.delete()
+                await send_long_text(query.message.chat_id, formatted)
 
-# --- ЗАПУСК -----------------------------------------------------
+# -------------------------------------------------------------------
+# ЗАПУСК
+# -------------------------------------------------------------------
 def main():
+    global bot
     threading.Thread(target=run_health_server, daemon=True).start()
     time.sleep(1)
     
@@ -184,6 +252,9 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(handle_action))
+    
+    # Для доступа к bot в send_long_text
+    bot = app.bot
     
     print("✅ Бот Adventure RPG запущен и готов к работе")
     app.run_polling()
