@@ -5,6 +5,7 @@ import requests
 import threading
 import hashlib
 import time
+import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -54,26 +55,64 @@ def clean_callback_data(text: str) -> str:
     return f"act_{hashlib.md5(text.encode('utf-8')).hexdigest()[:16]}"
 
 def parse_options_from_text(content: str):
-    """Извлекает варианты действий из ответа Mistral."""
+    """Извлекает варианты действий из ответа Mistral в разных форматах."""
     options = []
-    for line in content.split('\n'):
-        line = line.strip()
-        if 'Вариант' in line and ':' in line:
-            opt = line.split(':', 1)[1].strip()
-            if 2 < len(opt) < 50 and opt not in options:
-                options.append(opt)
+    
+    # Формат 1: "Вариант 1: действие" или "1: действие"
+    pattern1 = r'(?:Вариант\s*)?(\d+)[:\.\)]\s*\*?\*?([^*\n]+)'
+    matches = re.findall(pattern1, content)
+    for match in matches[:3]:
+        opt = match[1].strip().strip('*')
+        if opt and opt not in options:
+            options.append(opt)
+    
+    # Формат 2: "1. **Действие**" (с жирным форматированием)
     if len(options) < 2:
-        options = ["Исследовать окрестности", "Поговорить с жителем", "Пойти в таверну"]
-    return options[:3]
+        pattern2 = r'(\d+)\.\s+\*\*([^*]+)\*\*'
+        matches = re.findall(pattern2, content)
+        for match in matches[:3]:
+            opt = match[1].strip()
+            if opt and opt not in options:
+                options.append(opt)
+    
+    # Формат 3: строки после "ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:" с цифрами
+    if len(options) < 2:
+        # Ищем блок после ключевой фразы
+        block_match = re.search(r'ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:(.+?)(?=\n\n|\n[A-ZА-Я]|$)', content, re.DOTALL)
+        if block_match:
+            block = block_match.group(1)
+            lines = block.split('\n')
+            for line in lines:
+                line = line.strip()
+                # Ищем строки, начинающиеся с цифры
+                if re.match(r'^\d+', line):
+                    # Убираем номер и точку/скобку
+                    opt = re.sub(r'^\d+[\.:\)]\s*', '', line)
+                    opt = opt.strip('*').strip()
+                    if opt and len(opt) > 5 and len(opt) < 60 and opt not in options:
+                        options.append(opt)
+    
+    # Очищаем варианты от лишних символов
+    cleaned = []
+    for opt in options:
+        opt = re.sub(r'\*', '', opt)
+        opt = re.sub(r'[\[\]\(\)]', '', opt)
+        opt = opt.strip()
+        if opt and opt not in cleaned:
+            cleaned.append(opt)
+    
+    if len(cleaned) < 2:
+        cleaned = ["Исследовать окрестности", "Поговорить с жителем", "Пойти в таверну"]
+    
+    return cleaned[:3]
 
 def format_story_text(raw_text: str) -> str:
-    text = raw_text.replace("ОПИСАНИЕ ПЕРСОНАЖА:", "🎭 ОПИСАНИЕ ПЕРСОНАЖА:")
-    text = text.replace("НАЧАЛО ПРИКЛЮЧЕНИЯ:", "🌸 НАЧАЛО ПРИКЛЮЧЕНИЯ:")
+    text = raw_text.replace("ОПИСАНИЕ ПЕРСОНАЖА:", "🎭 **ОПИСАНИЕ ПЕРСОНАЖА:**")
+    text = text.replace("НАЧАЛО ПРИКЛЮЧЕНИЯ:", "🌸 **НАЧАЛО ПРИКЛЮЧЕНИЯ:**")
     text = text.replace("Вариант", "🌀 Вариант")
     return text
 
 def split_long_message(text, max_len=4000):
-    """Разбивает длинный текст на части для Telegram."""
     if len(text) <= max_len:
         return [text]
     parts = []
@@ -116,7 +155,15 @@ def ask_mistral(prompt, image_bytes=None):
         return None
 
 def generate_adventure_from_photo(image_bytes):
-    prompt = "Ты мастер RPG. Опиши персонажа с юмором и придумай начало приключения с добрыми персонажами (3-5 предложений). В конце чётко напиши 'ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:' и затем 3 варианта действий с новой строки."
+    prompt = """Ты мастер RPG. Опиши персонажа с юмором (3-4 предложения). Придумай начало приключения с добрыми персонажами (3-4 предложения). В конце напиши "ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:" и затем 3 варианта действий, каждый с новой строки в формате "1. Действие".
+
+Пример формата:
+ОПИСАНИЕ ПЕРСОНАЖА: ...
+НАЧАЛО ПРИКЛЮЧЕНИЯ: ...
+ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:
+1. Первое действие
+2. Второе действие
+3. Третье действие"""
     result = ask_mistral(prompt, image_bytes)
     if not result:
         return None, None
@@ -127,7 +174,17 @@ def continue_story(previous_story, chosen_action):
     if len(previous_story) > 3000:
         previous_story = "...[предыдущая история сокращена]...\n" + previous_story[-3000:]
     
-    prompt = f"Это история RPG. ПРЕДЫДУЩАЯ ИСТОРИЯ: {previous_story}\n\nИГРОК ВЫБРАЛ: '{chosen_action}'\n\nНапиши продолжение (3-5 предложений) и в конце напиши 'ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:' и 3 новых варианта действий."
+    prompt = f"""Это история RPG.
+
+ПРЕДЫДУЩАЯ ИСТОРИЯ:
+{previous_story}
+
+ИГРОК ВЫБРАЛ: "{chosen_action}"
+
+Напиши продолжение (3-5 предложений). В конце напиши "ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:" и затем 3 новых варианта действий, каждый с новой строки в формате "1. Действие".
+
+Продолжение:"""
+    
     result = ask_mistral(prompt)
     if not result:
         return None, None
@@ -141,7 +198,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user(update.effective_user.id)
     await update.message.reply_text(
         "🎮 Добро пожаловать в RPG-приключение!\n"
-        "📸 Пришли фото своего персонажа (рисунок, игрушку).\n"
+        "📸 Пришли фото своего персонажа.\n"
         "✨ Я начну историю и предложу варианты действий!"
     )
 
@@ -218,7 +275,6 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['action_map'] = action_map
         formatted = format_story_text(full_story)
         
-        # ВСЕГДА отправляем новое сообщение вместо редактирования
         try:
             await query.message.delete()
         except:
