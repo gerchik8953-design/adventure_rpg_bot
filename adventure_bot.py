@@ -217,8 +217,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user(update.effective_user.id)
     await update.message.chat.send_action(action="typing")
     
-    photo_file = await update.message.photo[-1].get_file()
-    photo_bytes = await photo_file.download_as_bytearray()
+    try:
+        photo_file = await update.message.photo[-1].get_file(read_timeout=60)
+        photo_bytes = await photo_file.download_as_bytearray()
+    except Exception as e:
+        logging.error(f"Photo download error: {e}")
+        await update.message.reply_text("❌ Не удалось загрузить фото. Попробуй ещё раз.")
+        return
     
     story, options = generate_adventure_from_photo(photo_bytes)
     if not story:
