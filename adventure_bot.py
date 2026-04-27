@@ -77,7 +77,6 @@ def split_long_message(text, max_len=4000):
     if len(text) <= max_len:
         return [text]
     parts = []
-    # Ищем место для разрыва
     while len(text) > max_len:
         split_point = text.rfind('\n\n', 0, max_len)
         if split_point == -1:
@@ -117,7 +116,7 @@ def ask_mistral(prompt, image_bytes=None):
         return None
 
 def generate_adventure_from_photo(image_bytes):
-    prompt = "Ты мастер RPG. Опиши персонажа с юмором и придумай начало приключения с добрыми героями (3-5 предложений). В конце чётко напиши 'ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:' и затем 3 варианта действий с новой строки."
+    prompt = "Ты мастер RPG. Опиши персонажа с юмором и придумай начало приключения с добрыми персонажами (3-5 предложений). В конце чётко напиши 'ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:' и затем 3 варианта действий с новой строки."
     result = ask_mistral(prompt, image_bytes)
     if not result:
         return None, None
@@ -125,7 +124,6 @@ def generate_adventure_from_photo(image_bytes):
     return result, options
 
 def continue_story(previous_story, chosen_action):
-    # Обрезаем предыдущую историю, если она слишком длинная (оставляем последние 3000 символов)
     if len(previous_story) > 3000:
         previous_story = "...[предыдущая история сокращена]...\n" + previous_story[-3000:]
     
@@ -148,10 +146,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def send_long_text(chat_id, text, reply_markup=None):
-    """Отправляет длинный текст, разбивая на части."""
     parts = split_long_message(text)
     for i, part in enumerate(parts):
-        # Кнопки прикрепляем только к последней части
         if i == len(parts) - 1:
             await bot.send_message(chat_id=chat_id, text=part, reply_markup=reply_markup)
         else:
@@ -221,24 +217,20 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([InlineKeyboardButton(f"🔹 {opt[:35]}", callback_data=key)])
         context.user_data['action_map'] = action_map
         formatted = format_story_text(full_story)
-        # Используем edit_message_text с разбиением (отправляем новое сообщение, если старое слишком длинное)
+        
+        # ВСЕГДА отправляем новое сообщение вместо редактирования
         try:
-            await query.edit_message_text(formatted, reply_markup=InlineKeyboardMarkup(keyboard))
-        except Exception as e:
-            if "Message_too_long" in str(e):
-                # Если сообщение слишком длинное, отправляем новое
-                await query.message.delete()
-                await send_long_text(query.message.chat_id, formatted, reply_markup=InlineKeyboardMarkup(keyboard))
-            else:
-                raise
+            await query.message.delete()
+        except:
+            pass
+        await send_long_text(query.message.chat_id, formatted, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         formatted = format_story_text(full_story)
         try:
-            await query.edit_message_text(formatted)
-        except Exception as e:
-            if "Message_too_long" in str(e):
-                await query.message.delete()
-                await send_long_text(query.message.chat_id, formatted)
+            await query.message.delete()
+        except:
+            pass
+        await send_long_text(query.message.chat_id, formatted)
 
 # -------------------------------------------------------------------
 # ЗАПУСК
@@ -253,7 +245,6 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(handle_action))
     
-    # Для доступа к bot в send_long_text
     bot = app.bot
     
     print("✅ Бот Adventure RPG запущен и готов к работе")
