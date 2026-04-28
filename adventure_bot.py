@@ -17,17 +17,22 @@ logging.basicConfig(level=logging.INFO)
 USERS_FILE = "users.json"
 
 # -------------------------------------------------------------------
-# HEALTH-СЕРВЕР
+# HEALTH-СЕРВЕР (исправлен)
 # -------------------------------------------------------------------
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'OK')
-
-def do_HEAD(self):  # <-- Добавьте это
+    
+    def do_HEAD(self):
+        """Обрабатывает HEAD запросы от Render"""
         self.send_response(200)
         self.end_headers()
+
+def run_health_server():
+    server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
+    server.serve_forever()
 
 # -------------------------------------------------------------------
 # СЧЁТЧИК ПОЛЬЗОВАТЕЛЕЙ
@@ -55,10 +60,8 @@ def clean_callback_data(text: str) -> str:
     return f"act_{hashlib.md5(text.encode('utf-8')).hexdigest()[:16]}"
 
 def parse_options_from_text(content: str):
-    """Извлекает варианты действий из ответа Mistral в разных форматах."""
     options = []
     
-    # Формат 1: "Вариант 1: действие" или "1: действие"
     pattern1 = r'(?:Вариант\s*)?(\d+)[:\.\)]\s*\*?\*?([^*\n]+)'
     matches = re.findall(pattern1, content)
     for match in matches[:3]:
@@ -66,7 +69,6 @@ def parse_options_from_text(content: str):
         if opt and opt not in options:
             options.append(opt)
     
-    # Формат 2: "1. **Действие**" (с жирным форматированием)
     if len(options) < 2:
         pattern2 = r'(\d+)\.\s+\*\*([^*]+)\*\*'
         matches = re.findall(pattern2, content)
@@ -75,24 +77,19 @@ def parse_options_from_text(content: str):
             if opt and opt not in options:
                 options.append(opt)
     
-    # Формат 3: строки после "ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:" с цифрами
     if len(options) < 2:
-        # Ищем блок после ключевой фразы
         block_match = re.search(r'ВОТ ЧТО ТЫ МОЖЕШЬ СДЕЛАТЬ:(.+?)(?=\n\n|\n[A-ZА-Я]|$)', content, re.DOTALL)
         if block_match:
             block = block_match.group(1)
             lines = block.split('\n')
             for line in lines:
                 line = line.strip()
-                # Ищем строки, начинающиеся с цифры
                 if re.match(r'^\d+', line):
-                    # Убираем номер и точку/скобку
                     opt = re.sub(r'^\d+[\.:\)]\s*', '', line)
                     opt = opt.strip('*').strip()
                     if opt and len(opt) > 5 and len(opt) < 60 and opt not in options:
                         options.append(opt)
     
-    # Очищаем варианты от лишних символов
     cleaned = []
     for opt in options:
         opt = re.sub(r'\*', '', opt)
