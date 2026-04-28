@@ -25,9 +25,9 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b'OK')
 
-def run_health_server():
-    server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
-    server.serve_forever()
+def do_HEAD(self):  # <-- Добавьте это
+        self.send_response(200)
+        self.end_headers()
 
 # -------------------------------------------------------------------
 # СЧЁТЧИК ПОЛЬЗОВАТЕЛЕЙ
